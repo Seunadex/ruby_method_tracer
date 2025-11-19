@@ -7,6 +7,7 @@ RubyMethodTracer is a lightweight Ruby mixin for targeted method tracing. It wra
 ## Highlights
 - Wrap only the methods you care about; public, protected, and private methods are supported.
 - Records duration, success/error state, and timestamps with thread-safe storage.
+- **NEW: Hierarchical call tree visualization** to understand nested method calls and dependencies.
 - Configurable threshold to ignore fast calls and optional log streaming via `Logger`.
 - Zero dependencies beyond the Ruby standard library, keeping overhead minimal.
 
@@ -125,13 +126,126 @@ tracer.trace_method(:expensive_operation)
 tracer.clear_results
 ```
 
+### Example 4: Call Tree Visualization (NEW!)
 
-### Options
+Visualize hierarchical method call relationships with the `EnhancedTracer`:
+
+```ruby
+class OrderProcessor
+  def process_order(order)
+    validate_order(order)
+    charge_payment(order)
+    send_confirmation(order)
+  end
+
+  def validate_order(order)
+    check_inventory(order.items)
+  end
+
+  def charge_payment(order)
+    # Payment processing...
+  end
+
+  def send_confirmation(order)
+    # Email sending...
+  end
+
+  private
+
+  def check_inventory(items)
+    # Inventory check...
+  end
+end
+
+# Use EnhancedTracer for call tree tracking
+tracer = RubyMethodTracer::EnhancedTracer.new(OrderProcessor, threshold: 0.0)
+tracer.trace_method(:process_order)
+tracer.trace_method(:validate_order)
+tracer.trace_method(:charge_payment)
+tracer.trace_method(:send_confirmation)
+tracer.trace_method(:check_inventory)
+
+processor = OrderProcessor.new
+processor.process_order(order)
+
+# Print beautiful call tree visualization
+tracer.print_tree
+```
+
+This outputs a hierarchical tree showing nested calls:
+
+```
+METHOD CALL TREE
+============================================================
+└── OrderProcessor#process_order (125.3ms)
+    ├── OrderProcessor#validate_order (15.2ms)
+    │   └── OrderProcessor#check_inventory (12.1ms)
+    ├── OrderProcessor#charge_payment (85.4ms)
+    └── OrderProcessor#send_confirmation (24.7ms)
+============================================================
+
+STATISTICS
+------------------------------------------------------------
+Total Calls: 5
+Total Time: 250.6ms
+Unique Methods: 5
+Max Depth: 2
+
+Slowest Methods (by average time):
+  1. OrderProcessor#process_order - 125.3ms
+  2. OrderProcessor#charge_payment - 85.4ms
+  3. OrderProcessor#send_confirmation - 24.7ms
+  4. OrderProcessor#validate_order - 15.2ms
+  5. OrderProcessor#check_inventory - 12.1ms
+
+Most Called Methods:
+  1. OrderProcessor#process_order - 1 calls
+  2. OrderProcessor#validate_order - 1 calls
+  ...
+```
+
+**Call Tree Features:**
+- Shows parent-child relationships between methods
+- Visual tree structure with proper indentation
+- Execution times for each method call
+- Statistics summary (slowest methods, most called, max depth)
+- Error indicators with full error messages
+- Color-coded output for better readability
+
+
+### Options (SimpleTracer)
 
 - `threshold` (Float, default `0.001`): minimum duration (in seconds) to record.
 - `auto_output` (Boolean, default `false`): emit a log line using `Logger` for each recorded call.
 - `max_calls` (Integer, default `1000`): maximum number of calls to store in memory. When exceeded, the oldest calls are automatically removed to prevent memory leaks.
 - `logger` (Logger, default `Logger.new($stdout)`): custom logger instance for output. Useful for directing logs to files or custom log handlers.
+
+### Options (EnhancedTracer)
+
+EnhancedTracer supports all SimpleTracer options plus:
+
+- `track_hierarchy` (Boolean, default `true`): enable call tree tracking. Set to `false` to use EnhancedTracer like SimpleTracer.
+
+### API Methods (EnhancedTracer)
+
+- `print_tree(options = {})` - Print formatted call tree to stdout
+  - Options: `colorize: true/false`, `show_errors: true/false`
+- `format_tree(options = {})` - Get formatted call tree as string
+- `fetch_enhanced_results` - Get hash with `:flat_calls`, `:call_hierarchy`, and `:statistics`
+- `clear_results` - Clear both flat results and call tree
+
+## Choosing Between SimpleTracer and EnhancedTracer
+
+**Use SimpleTracer when:**
+- You only need flat timing data
+- You want minimal overhead
+- You're tracing independent methods
+
+**Use EnhancedTracer when:**
+- You need to understand call hierarchies
+- You want to visualize nested method calls
+- You're debugging complex call flows
+- You need statistics on method relationships
 
 ## Development
 

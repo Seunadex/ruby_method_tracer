@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+## [0.3.0] - 2025-11-19
+
+### Added
+- **NEW: Hierarchical Call Tree Visualization** - `EnhancedTracer` class for tracking nested method calls
+- `CallTree` class for managing call hierarchy with parent-child relationships
+- `TreeFormatter` for beautiful tree visualization with proper indentation and tree characters
+- Statistics calculation: slowest methods, most called methods, max call depth
+- `print_tree()` method for outputting formatted call trees
+- `format_tree()` method for programmatic access to tree visualization
+- `fetch_enhanced_results()` for combined flat and hierarchical data
+- Thread-safe call stack management
+- Error tracking in call tree with full error messages
+- Color-coded tree output for better readability
+- 24 new comprehensive tests covering call tree functionality
+
+### Changed
+- Main module now auto-loads `EnhancedTracer` and formatting classes
+- README updated with call tree examples and usage guide
+- Documentation expanded with decision guide for choosing between SimpleTracer and EnhancedTracer
+
 ## [0.2.0] - 2025-11-19
 
 ### Added
