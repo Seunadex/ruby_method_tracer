@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
 
   spec.summary = "Lightweight method tracing for Ruby applications"
   spec.description = "A developer-friendly gem for tracing method calls, execution times, with minimal overhead."
-  spec.homepage = "https://github.com/seunadex/ruby_method_tracer"
+  spec.homepage = "https://github.com/Seunadex/ruby_method_tracer"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.0.0"
 
@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
 
   spec.metadata["homepage_uri"] = "https://github.com/Seunadex/ruby_method_tracer/blob/main/README.md"
   spec.metadata["source_code_uri"] = spec.homepage
-  spec.metadata["changelog_uri"] = "https://github.com/seunadex/ruby_method_tracer/blob/main/CHANGELOG.md"
+  spec.metadata["changelog_uri"] = "https://github.com/Seunadex/ruby_method_tracer/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
   # Specify which files should be added to the gem when it is released.
@@ -36,7 +36,6 @@ Gem::Specification.new do |spec|
 
   # Uncomment to register a new dependency of your gem
   # spec.add_dependency "example-gem", "~> 1.0"
-  spec.add_dependency "logger", "~> 1.7.0"
 
   # For more information and examples about making a new gem, check out our
   # guide at: https://bundler.io/guides/creating_gem.html

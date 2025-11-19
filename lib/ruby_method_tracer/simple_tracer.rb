@@ -12,6 +12,8 @@ module RubyMethodTracer
   # Options:
   # - :threshold (Float): Minimum duration in seconds to record; defaults to 0.001 (1ms).
   # - :auto_output (Boolean): When true, prints each call summary; defaults to false.
+  # - :max_calls (Integer): Maximum number of calls to store; defaults to 1000. When exceeded, oldest calls are removed.
+  # - :logger (Logger): Custom logger instance; defaults to Logger.new($stdout).
   #
   # Usage:
   #   tracer = RubyMethodTracer::SimpleTracer.new(MyClass, threshold: 0.005)
@@ -24,7 +26,7 @@ module RubyMethodTracer
       @calls = []
       @lock  = Mutex.new # Mutex to make writes to @calls thread safe.
       @wrapped_methods = Set.new
-      @logger = Logger.new($stdout)
+      @logger = @options[:logger] || Logger.new($stdout)
     end
 
     def trace_method(name)
@@ -56,7 +58,11 @@ module RubyMethodTracer
         timestamp: Time.now
       }
 
-      @lock.synchronize { @calls << call_details } # Thread safe append to shared results arrray.
+      @lock.synchronize do
+        @calls << call_details
+        # Enforce max_calls limit by removing oldest entries
+        @calls.shift if @calls.size > @options[:max_calls]
+      end
 
       output_call(call_details) if @options[:auto_output]
     end
@@ -72,12 +78,18 @@ module RubyMethodTracer
       }
     end
 
+    def clear_results
+      @lock.synchronize { @calls.clear }
+    end
+
     private
 
     def default_options
       {
         threshold: 0.001,
-        auto_output: false
+        auto_output: false,
+        max_calls: 1000,
+        logger: nil
       }
     end
 
