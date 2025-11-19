@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "spec_helper"
-require "pry"
 
 RSpec.describe RubyMethodTracer::SimpleTracer do
   let(:target_class) do
@@ -139,6 +138,66 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       expect(log).to match(
         /\AI, \[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+ #\d+\]  INFO -- : TRACE: #{Regexp.escape("#{target_class}#multiply")} \[OK\] took 5\.0ms\n\z/ # rubocop:disable Layout/LineLength
       )
+    end
+  end
+
+  describe "memory management" do
+    it "enforces max_calls limit by removing oldest entries" do
+      tracer = described_class.new(target_class, threshold: 0.0, max_calls: 3)
+      tracer.trace_method(:multiply)
+
+      # Simulate 5 calls
+      5.times do |i|
+        allow(tracer).to receive(:monotonic_time).and_return(i.to_f, i.to_f + 0.001)
+        instance.multiply(i)
+      end
+
+      results = tracer.fetch_results
+      expect(results[:total_calls]).to eq(3) # Should only keep last 3 calls
+      expect(results[:calls].size).to eq(3)
+    end
+
+    it "clears all results when clear_results is called" do
+      tracer = described_class.new(target_class, threshold: 0.0)
+      tracer.trace_method(:multiply)
+
+      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+      instance.multiply(3)
+
+      expect(tracer.fetch_results[:total_calls]).to eq(1)
+
+      tracer.clear_results
+
+      expect(tracer.fetch_results[:total_calls]).to eq(0)
+      expect(tracer.fetch_results[:calls]).to be_empty
+    end
+  end
+
+  describe "logger configuration" do
+    it "uses custom logger when provided" do
+      custom_logger = Logger.new(StringIO.new)
+      tracer = described_class.new(target_class, threshold: 0.0, auto_output: true, logger: custom_logger)
+      tracer.trace_method(:multiply)
+
+      expect(custom_logger).to receive(:info).with(/TRACE:/)
+      allow(tracer).to receive(:colorize) { |text, _color| text }
+      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+
+      instance.multiply(5)
+    end
+
+    it "uses default logger when none provided" do
+      out = StringIO.new
+      allow(Logger).to(receive(:new).and_wrap_original { |orig, *_args| orig.call(out) })
+
+      tracer = described_class.new(target_class, threshold: 0.0, auto_output: true)
+      tracer.trace_method(:multiply)
+      allow(tracer).to receive(:colorize) { |text, _color| text }
+      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+
+      instance.multiply(5)
+
+      expect(out.string).to include("TRACE:")
     end
   end
 end

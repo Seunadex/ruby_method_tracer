@@ -12,19 +12,22 @@ RubyMethodTracer is a lightweight Ruby mixin for targeted method tracing. It wra
 
 ## Installation
 
-This project has not yet been published to RubyGems.
-
-Add it to your Gemfile directly from GitHub:
+Add this line to your application's Gemfile:
 
 ```ruby
-# Gemfile
-gem "ruby_method_tracer", github: "Seunadex/ruby_method_tracer"
+gem "ruby_method_tracer"
 ```
 
-Then install:
+And then execute:
 
 ```bash
 bundle install
+```
+
+Or install it yourself as:
+
+```bash
+gem install ruby_method_tracer
 ```
 
 For local development or experimentation:
@@ -83,6 +86,9 @@ pp tracer.fetch_results
 #        { method_name: "Worker#perform", execution_time: 0.0063, status: :success, ... }
 #      ]
 #    }
+
+# Clear results when needed to free memory
+tracer.clear_results
 ```
 
 ### Example 2
@@ -99,11 +105,33 @@ class OrderProcessor
 end
 ```
 
+### Example 3: Advanced Configuration
+
+```ruby
+# Use a custom logger to write traces to a file
+custom_logger = Logger.new('trace.log')
+custom_logger.level = Logger::INFO
+
+tracer = RubyMethodTracer::SimpleTracer.new(
+  MyService,
+  threshold: 0.01,           # Only record calls over 10ms
+  auto_output: true,         # Log each call
+  max_calls: 500,            # Keep only last 500 calls in memory
+  logger: custom_logger      # Use custom logger
+)
+tracer.trace_method(:expensive_operation)
+
+# Later, clear results to free memory
+tracer.clear_results
+```
+
 
 ### Options
 
 - `threshold` (Float, default `0.001`): minimum duration (in seconds) to record.
 - `auto_output` (Boolean, default `false`): emit a log line using `Logger` for each recorded call.
+- `max_calls` (Integer, default `1000`): maximum number of calls to store in memory. When exceeded, the oldest calls are automatically removed to prevent memory leaks.
+- `logger` (Logger, default `Logger.new($stdout)`): custom logger instance for output. Useful for directing logs to files or custom log handlers.
 
 ## Development
 
