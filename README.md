@@ -1,4 +1,5 @@
 [![Ruby](https://github.com/Seunadex/ruby_method_tracer/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/Seunadex/ruby_method_tracer/actions/workflows/main.yml)
+[![codecov](https://codecov.io/gh/Seunadex/ruby_method_tracer/branch/main/graph/badge.svg)](https://codecov.io/gh/Seunadex/ruby_method_tracer)
 
 # RubyMethodTracer
 
@@ -252,6 +253,16 @@ EnhancedTracer supports all SimpleTracer options plus:
 After checking out the repo, run `bin/setup` to install dependencies. Then run `rake spec` to execute the test suite. You can also run `bin/console` for an interactive prompt.
 
 To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version in `lib/ruby_method_tracer/version.rb`, and then run `bundle exec rake release`.
+
+### Code Coverage
+
+This project uses [SimpleCov](https://github.com/simplecov-ruby/simplecov) for code coverage analysis. Coverage reports are automatically generated when running tests:
+
+```bash
+bundle exec rspec
+```
+
+After running the tests, open `coverage/index.html` in your browser to view the detailed coverage report. The project maintains a minimum coverage threshold of 95% line coverage and 80% branch coverage.
 
 ## Contributing
 
