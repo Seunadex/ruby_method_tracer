@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+## [0.3.2] - 2025-11-22
+
+### Fixed
+- Fixed `SystemStackError: stack level too deep` with Ruby 3.4+ by improving keyword argument forwarding in method wrapper
+
 ## [0.3.1] - 2025-11-22
 
 ### Fixed
