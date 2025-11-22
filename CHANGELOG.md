@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## [0.3.1] - 2025-11-22
+
+### Fixed
+- Fixed file permissions for `call_tree.rb`, `enhanced_tracer.rb`, and formatter files to be world-readable
+- Gem now correctly includes all files when installed (previously missing EnhancedTracer and formatters)
+
+### Added
+- Code coverage reporting with SimpleCov (99% line coverage, 84% branch coverage)
+- Codecov integration for CI/CD coverage tracking
+- Comprehensive test suite for BaseFormatter and TreeFormatter (18 new tests)
+- Coverage badge in README
+
 ## [0.3.0] - 2025-11-19
 
 ### Added
