@@ -116,7 +116,12 @@ module RubyMethodTracer
     def build_wrapper(aliased, method_name, key, tracer)
       proc do |*args, **kwargs, &block|                                # Captures args and block exactly like original.
         tracer.__send__(:wrap_call, method_name, key) do               # Delegates to wrapper to handle timing and flag.
-          __send__(aliased, *args, **kwargs, &block)                   # Calls the original aliased implementation.
+          # Ruby 3+ compatible keyword argument forwarding
+          if kwargs.empty?
+            __send__(aliased, *args, &block)                           # Calls without kwargs to avoid Ruby warnings
+          else
+            __send__(aliased, *args, **kwargs, &block)                 # Calls the original aliased implementation.
+          end
         end
       end
     end
