@@ -2,6 +2,7 @@
 
 require "set"
 require "logger"
+require_relative "formatters/base_formatter"
 
 module RubyMethodTracer
   # SimpleTracer wraps instance methods on a target class and records
@@ -19,7 +20,7 @@ module RubyMethodTracer
   #   tracer = RubyMethodTracer::SimpleTracer.new(MyClass, threshold: 0.005)
   #   tracer.trace_method(:expensive_call)
   #   results = tracer.fetch_results
-  class SimpleTracer # rubocop:disable Metrics/ClassLength
+  class SimpleTracer
     def initialize(target_class, **options)
       @target_class = target_class
       @options = default_options.merge(options)
@@ -27,6 +28,9 @@ module RubyMethodTracer
       @lock  = Mutex.new # Mutex to make writes to @calls thread safe.
       @wrapped_methods = Set.new
       @logger = @options[:logger] || Logger.new($stdout)
+      # Unique per instance so separate tracers don't interfere with each other.
+      @tracer_key = :"__ruby_method_tracer_in_trace_#{object_id}"
+      @formatter = Formatters::BaseFormatter.new
     end
 
     def trace_method(name)
@@ -39,7 +43,7 @@ module RubyMethodTracer
       @target_class.send(:alias_method, aliased, method_name) # Aliases original implementation to our private name.
 
       tracer = self
-      key = :__ruby_method_tracer_in_trace # local key to avoid recursive tracing.
+      key = @tracer_key # unique per tracer instance; prevents cross-tracer interference
 
       # Defines a new method with the original name that delegates to our wrapper.
       @target_class.define_method(method_name, &build_wrapper(aliased, method_name, key, tracer))
@@ -161,27 +165,11 @@ module RubyMethodTracer
     end
 
     def format_time(seconds)
-      if seconds >= 1.0
-        "#{seconds.round(3)}s"
-      elsif seconds >= 0.001
-        "#{(seconds * 1000).round(1)}ms"
-      else
-        "#{(seconds * 1_000_000).round(0)}µs"
-      end
+      @formatter.format_time(seconds)
     end
 
     def colorize(text, color)
-      colors = {
-        red: "31",
-        green: "32",
-        yellow: "33",
-        blue: "34",
-        magenta: "35",
-        cyan: "36",
-        white: "37",
-        reset: "0"
-      }
-      "\e[#{colors[color]}m#{text}\e[#{colors[:reset]}m"
+      @formatter.colorize(text, color)
     end
   end
 end

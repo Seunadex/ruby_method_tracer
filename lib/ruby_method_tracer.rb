@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 require_relative "ruby_method_tracer/version"
+require_relative "ruby_method_tracer/formatters/base_formatter"
 require_relative "ruby_method_tracer/simple_tracer"
 require_relative "ruby_method_tracer/call_tree"
 require_relative "ruby_method_tracer/enhanced_tracer"
-require_relative "ruby_method_tracer/formatters/base_formatter"
 require_relative "ruby_method_tracer/formatters/tree_formatter"
 
 # Public: Mixin that adds lightweight method tracing to classes.

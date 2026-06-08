@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-08
+
+### Changed
+- `CallTree` now stores its call stack in per-thread storage (keyed per instance) instead of a single shared `@call_stack`, so concurrent callers each track their own nesting depth. `@calls` and `@root_calls` remain shared and `Mutex`-guarded.
+- `SimpleTracer` and `EnhancedTracer` now use a per-instance reentrancy key (`__ruby_method_tracer_in_trace_<object_id>`) so separate tracer instances no longer interfere with each other's re-entry guards.
+- `EnhancedTracer` hierarchy tracking extracted into a dedicated `run_with_hierarchy` method; the call-tree entry is now always closed in an `ensure` block (even for non-`StandardError` exceptions) to prevent the per-thread call stack from becoming corrupted.
+- `SimpleTracer` now delegates `format_time` and `colorize` to a `Formatters::BaseFormatter` instance instead of duplicating the formatting logic inline.
+
+### Fixed
+- Keyword-argument forwarding in `EnhancedTracer`'s wrapper now avoids passing `**{}`, preventing `SystemStackError` on Ruby 3.4+ (mirrors the `SimpleTracer` fix from 0.3.2).
+
 ## [0.3.2] - 2025-11-22
 
 ### Fixed
