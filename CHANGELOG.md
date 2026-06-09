@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-09
+
+### Added
+- Global configuration via `RubyMethodTracer.configure { |c| ... }`, with `RubyMethodTracer.configuration` and `RubyMethodTracer.reset_configuration!`. Tracers created through the mixin now use these as defaults; explicit per-tracer options still take precedence.
+- `Formatters::JsonFormatter` — serializes flat results or a call tree to JSON. Method arguments are never captured; exceptions are reduced to class + message; backtraces are opt-in (`include_backtrace:`) and length-bounded (`backtrace_limit:`). Uses `JSON.generate` only (no `Marshal`/`eval`/`YAML`).
+- `Formatters::FlatFormatter` — renders an aggregated text table (method, calls, total, avg, errors) sorted by total time.
+- `Exportable` mixin adding `render(format:)` and `export(path, format:)` to both tracers. Supported formats: `:json`, `:flat`, and `:tree` (EnhancedTracer only).
+
+### Security
+- File export never invokes a shell and never interpolates the path into a command; it writes via `File.open` with `O_NOFOLLOW`, requires the destination directory to already exist (no recursive mkdir of attacker-influenced paths), and refuses to write through an existing symlink.
+- Export format dispatch compares on the string form to avoid interning arbitrary symbols from potentially untrusted input.
+
 ## [0.3.3] - 2026-06-08
 
 ### Changed

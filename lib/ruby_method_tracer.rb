@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
 require_relative "ruby_method_tracer/version"
+require_relative "ruby_method_tracer/configuration"
 require_relative "ruby_method_tracer/formatters/base_formatter"
 require_relative "ruby_method_tracer/simple_tracer"
 require_relative "ruby_method_tracer/call_tree"
 require_relative "ruby_method_tracer/enhanced_tracer"
 require_relative "ruby_method_tracer/formatters/tree_formatter"
+require_relative "ruby_method_tracer/formatters/json_formatter"
+require_relative "ruby_method_tracer/formatters/flat_formatter"
 
 # Public: Mixin that adds lightweight method tracing to classes.
 #
@@ -25,6 +28,39 @@ require_relative "ruby_method_tracer/formatters/tree_formatter"
 # See `RubyMethodTracer::SimpleTracer` for available options.
 module RubyMethodTracer
   class Error < StandardError; end
+
+  @configuration = Configuration.new
+  @configuration_mutex = Mutex.new
+
+  class << self
+    # Global configuration shared as defaults by tracers created via the mixin.
+    #
+    # @return [RubyMethodTracer::Configuration]
+    attr_reader :configuration
+
+    # Yield the global configuration for mutation. Intended to be called once
+    # at application boot.
+    #
+    #   RubyMethodTracer.configure do |config|
+    #     config.threshold = 0.005
+    #   end
+    #
+    # @yieldparam config [RubyMethodTracer::Configuration]
+    # @return [RubyMethodTracer::Configuration]
+    def configure
+      @configuration_mutex.synchronize do
+        yield(@configuration) if block_given?
+      end
+      @configuration
+    end
+
+    # Reset the global configuration back to built-in defaults.
+    #
+    # @return [RubyMethodTracer::Configuration]
+    def reset_configuration!
+      @configuration_mutex.synchronize { @configuration.reset! }
+    end
+  end
 
   def self.included(base)
     base.extend(ClassMethods)

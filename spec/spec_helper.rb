@@ -26,4 +26,7 @@ RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
+
+  # Keep global configuration from leaking between examples.
+  config.after { RubyMethodTracer.reset_configuration! }
 end

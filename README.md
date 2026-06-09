@@ -8,7 +8,9 @@ RubyMethodTracer is a lightweight Ruby mixin for targeted method tracing. It wra
 ## Highlights
 - Wrap only the methods you care about; public, protected, and private methods are supported.
 - Records duration, success/error state, and timestamps with thread-safe storage.
-- **NEW: Hierarchical call tree visualization** to understand nested method calls and dependencies.
+- **Hierarchical call tree visualization** to understand nested method calls and dependencies.
+- **NEW: JSON and flat-table formatters plus file export**, alongside the existing tree output.
+- **NEW: Global configuration** via `RubyMethodTracer.configure` for process-wide defaults.
 - Configurable threshold to ignore fast calls and optional log streaming via `Logger`.
 - Zero dependencies beyond the Ruby standard library, keeping overhead minimal.
 
@@ -213,6 +215,51 @@ Most Called Methods:
 - Error indicators with full error messages
 - Color-coded output for better readability
 
+
+### Global Configuration
+
+Set process-wide defaults once at boot. Per-tracer options always override these globals.
+
+```ruby
+RubyMethodTracer.configure do |config|
+  config.threshold       = 0.005   # record calls slower than 5ms
+  config.auto_output     = false
+  config.max_calls       = 1000
+  config.logger          = Rails.logger if defined?(Rails)
+  config.track_hierarchy = true      # EnhancedTracer call-tree tracking
+end
+```
+
+`RubyMethodTracer.reset_configuration!` restores the built-in defaults (useful in tests).
+
+### Reporting & Export
+
+Both tracers can render their results to a string or write them to a file via the formatter layer.
+
+```ruby
+tracer = RubyMethodTracer::EnhancedTracer.new(OrderProcessor, threshold: 0.0)
+tracer.trace_method(:process_order)
+OrderProcessor.new.process_order(order)
+
+# Render to a string
+puts tracer.render(format: :flat)              # aggregated table
+json = tracer.render(format: :json, pretty: true)
+tree = tracer.render(format: :tree)            # EnhancedTracer only
+
+# Write to a file (returns the absolute path written)
+tracer.export("tmp/trace.json", format: :json)
+tracer.export("tmp/trace.txt",  format: :flat, colorize: false)
+```
+
+Supported formats: `:json`, `:flat`, and `:tree` (EnhancedTracer only).
+
+**JSON options**
+
+- `pretty` (Boolean, default `false`): pretty-print the JSON.
+- `include_backtrace` (Boolean, default `false`): include exception backtraces. Off by default to avoid leaking internal paths.
+- `backtrace_limit` (Integer, default `10`): maximum backtrace lines when `include_backtrace` is enabled.
+
+> Security/privacy: method **arguments are never captured**, so secrets passed as parameters are not recorded. Exceptions are reduced to class + message (backtrace is opt-in). Export never invokes a shell, requires the target directory to already exist, and refuses to write through a symlink. Call `render`/`export` when tracing is quiescent (after the traced work completes).
 
 ### Options (SimpleTracer)
 

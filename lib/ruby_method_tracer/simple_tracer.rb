@@ -3,6 +3,7 @@
 require "set"
 require "logger"
 require_relative "formatters/base_formatter"
+require_relative "exportable"
 
 module RubyMethodTracer
   # SimpleTracer wraps instance methods on a target class and records
@@ -20,7 +21,10 @@ module RubyMethodTracer
   #   tracer = RubyMethodTracer::SimpleTracer.new(MyClass, threshold: 0.005)
   #   tracer.trace_method(:expensive_call)
   #   results = tracer.fetch_results
+  # rubocop:disable Metrics/ClassLength
   class SimpleTracer
+    include Exportable
+
     def initialize(target_class, **options)
       @target_class = target_class
       @options = default_options.merge(options)
@@ -88,12 +92,19 @@ module RubyMethodTracer
 
     private
 
+    # Data passed to formatters by Exportable. Overridden by EnhancedTracer to
+    # expose the call tree.
+    def report_source
+      fetch_results
+    end
+
     def default_options
+      config = RubyMethodTracer.configuration
       {
-        threshold: 0.001,
-        auto_output: false,
-        max_calls: 1000,
-        logger: nil
+        threshold: config.threshold,
+        auto_output: config.auto_output,
+        max_calls: config.max_calls,
+        logger: config.logger
       }
     end
 
@@ -172,4 +183,5 @@ module RubyMethodTracer
       @formatter.colorize(text, color)
     end
   end
+  # rubocop:enable Metrics/ClassLength
 end

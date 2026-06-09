@@ -83,6 +83,17 @@ module RubyMethodTracer
 
     private
 
+    # Expose the call tree so JSON/flat exports include hierarchy + statistics.
+    def report_source
+      @call_tree
+    end
+
+    def build_formatter(format)
+      return Formatters::TreeFormatter.new if format.to_sym == :tree
+
+      super
+    end
+
     def build_enhanced_wrapper(aliased, method_name, key, tracer)
       track_hierarchy = tracer.instance_variable_get(:@track_hierarchy)
       # Use method-specific key to prevent only SELF-recursion, not all nested calls
@@ -139,7 +150,7 @@ module RubyMethodTracer
     # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
 
     def default_options
-      super.merge(track_hierarchy: true)
+      super.merge(track_hierarchy: RubyMethodTracer.configuration.track_hierarchy)
     end
   end
 end
