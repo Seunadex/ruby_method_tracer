@@ -16,5 +16,3 @@ gem "rubocop-rspec", "~> 3.7.0"
 
 gem "simplecov", "~> 0.22.0", require: false
 gem "simplecov_json_formatter", "~> 0.1", require: false
-
-gem "rbs", "~> 3.9", require: false

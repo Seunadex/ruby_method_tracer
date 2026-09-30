@@ -129,7 +129,7 @@ RSpec.describe RubyMethodTracer::Wrapper do
       }, [1, 2]],
       "spaceship" => [-> { Class.new { def <=>(_other) = 0 } }, :<=>, ->(obj) { obj <=> 1 }, 0],
       "append" => [-> { Class.new { def <<(num) = "got #{num}" } }, :<<, ->(obj) { obj << 9 }, "got 9"],
-      "unary minus" => [-> { Class.new { def -@ = :negated } }, :-@, ->(obj) { -obj }, :negated]
+      "unary minus" => [-> { Class.new { def -@ = :negated } }, :-@, :-@.to_proc, :negated]
     }.each do |label, (build, name, invoke, expected)|
       it "traces a #{label} method without changing what it returns" do
         klass = build.call

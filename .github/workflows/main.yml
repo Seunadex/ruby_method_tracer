@@ -11,6 +11,10 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     name: Ruby ${{ matrix.ruby }}
+    # ruby-head is a canary: its failures are usually upstream dev-dependency
+    # churn (a transitive gem refusing the dev ruby), not a defect in this gem,
+    # so it reports without blocking.
+    continue-on-error: ${{ matrix.ruby == 'head' }}
     strategy:
       # The whole point of the matrix is to catch version-specific argument
       # forwarding breakage, so one failing version must not cancel the rest.
@@ -57,8 +61,12 @@ jobs:
         bundler-cache: true
     - name: Lint
       run: bundle exec rubocop
+    # Installed ad hoc rather than bundled: rbs needs Ruby >= 3.1 and this gem
+    # supports >= 3.0, so it cannot live in the Gemfile without breaking that lane.
     - name: Validate RBS signatures
-      run: bundle exec rbs -r logger -I sig validate
+      run: |
+        gem install rbs --no-document
+        rbs -r logger -I sig validate
 
   gem-smoke:
     runs-on: ubuntu-latest

@@ -9,9 +9,14 @@ require "rubocop/rake_task"
 
 RuboCop::RakeTask.new
 
-desc "Type-check the shipped RBS signatures"
+# Deliberately not a bundle dependency: rbs requires Ruby >= 3.1, and this gem
+# supports >= 3.0, so adding it to the Gemfile breaks `bundle install` on 3.0.
+# Install it yourself (`gem install rbs`) to run this; CI validates it strictly.
+desc "Type-check the shipped RBS signatures (requires: gem install rbs)"
 task :rbs do
-  sh "bundle exec rbs -r logger -I sig validate"
+  sh "rbs -r logger -I sig validate"
+rescue Errno::ENOENT
+  abort "rbs not found. Install it with: gem install rbs"
 end
 
-task default: %i[spec rubocop rbs]
+task default: %i[spec rubocop]
