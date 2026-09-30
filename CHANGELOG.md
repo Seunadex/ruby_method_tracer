@@ -11,6 +11,7 @@
 - Methods that exit via `throw` or a non-`StandardError` exception are now recorded with a new `:incomplete` status instead of vanishing from the results.
 - `Exportable#export` no longer raises `NameError` on platforms without the POSIX `O_NOFOLLOW` flag (notably Windows); the flag is applied only where `File::NOFOLLOW` is defined, and the stat-based symlink guard still applies everywhere.
 - `Formatters::BaseFormatter#format` now takes `(_data, _options = {})`, matching every subclass. The abstract contract previously described a signature no implementation used.
+- On Ruby 3.0, tracing a method that uses `...` argument forwarding raised `ArgumentError` on any keyword argument. Ruby 3.0 describes `def m(...)` as a bare rest plus a block and omits the keyword rest that 3.1+ reports, so the generated wrapper funnelled keywords into the positional array. The missing keyword rest is put back on that version only — on 3.1+ the same shape means `def m(*, &)`, which genuinely takes no keywords.
 - Tracing a method whose name is not a plain identifier — a predicate (`ready?`), bang (`save!`), setter (`val=`) or operator (`==`, `[]`, `[]=`, `<=>`, `<<`, `-@`) — now works. The saved original is aliased under a name the parser accepts, since the generated wrapper calls it directly; previously such an alias could misparse silently rather than fail loudly.
 
 ### Added

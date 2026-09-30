@@ -44,3 +44,8 @@ Metrics/ParameterLists:
 Style/OptionalArguments:
   Exclude:
     - 'spec/ruby_method_tracer/wrapper_spec.rb'
+# The parameter-shape literals there are written the way Method#parameters
+# prints them, which is the point of those examples.
+Style/SymbolArray:
+  Exclude:
+    - 'spec/ruby_method_tracer/wrapper_spec.rb'

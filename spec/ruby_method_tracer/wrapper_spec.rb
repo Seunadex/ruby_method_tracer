@@ -151,4 +151,35 @@ RSpec.describe RubyMethodTracer::Wrapper do
       expect(klass.new.methods.grep(/ruby_method_tracer/)).to be_empty
     end
   end
+
+  # Driven through Signature directly with the parameter lists each Ruby
+  # reports, so the behaviour is covered on every version rather than only on
+  # the one running the suite.
+  describe RubyMethodTracer::Wrapper::Signature do
+    it "declares a keyword rest for the shape Ruby 3.0 reports for ..." do
+      legacy = described_class.new([[:rest, :*], [:block, :&]], repair_forwarding: true)
+      modern = described_class.new([[:rest, :*], [:keyrest, :**], [:block, :&]])
+
+      expect(legacy.declaration).to eq(modern.declaration)
+      expect(legacy.declaration).to include("**")
+    end
+
+    it "leaves a genuine rest-and-block signature alone" do
+      signature = described_class.new([[:rest, :args], [:block, :blk]], repair_forwarding: true)
+
+      expect(signature.declaration).to eq("*args, &blk")
+    end
+
+    it "does not add keywords to an anonymous rest parameter" do
+      signature = described_class.new([[:rest, :*]], repair_forwarding: true)
+
+      expect(signature.declaration).not_to include("**")
+    end
+
+    it "does not add keywords on Rubies that describe ... completely" do
+      signature = described_class.new([[:rest, :*], [:block, :&]], repair_forwarding: false)
+
+      expect(signature.declaration).not_to include("**")
+    end
+  end
 end

@@ -71,7 +71,22 @@ module RubyMethodTracer
       }.freeze
       private_constant :HANDLERS
 
-      def initialize(params)
+      # Ruby 3.0 reports `def m(...)` as a bare rest plus a block and omits the
+      # keyword rest; 3.1+ includes [:keyrest, :**]. On 3.1+ no repair is
+      # needed, and guessing would be wrong there — `def m(*, &)` reports the
+      # same shape and genuinely takes no keywords.
+      FORWARDING_OMITS_KEYWORDS = RUBY_VERSION < "3.1"
+      FORWARD_REST = %i[rest *].freeze
+      FORWARD_BLOCK = %i[block &].freeze
+      FORWARD_KEYREST = %i[keyrest **].freeze
+      private_constant :FORWARDING_OMITS_KEYWORDS, :FORWARD_REST, :FORWARD_BLOCK, :FORWARD_KEYREST
+
+      # @param params [Array] Parameter list as reported by Method#parameters
+      # @param repair_forwarding [Boolean] Put back the keyword rest that this
+      #   Ruby omits when describing `...`. Injectable so the repair can be
+      #   exercised on any version.
+      def initialize(params, repair_forwarding: FORWARDING_OMITS_KEYWORDS)
+        params = with_forwarded_keywords(params) if repair_forwarding
         @declaration = []
         @positional = []
         @keyword = []
@@ -170,6 +185,19 @@ module RubyMethodTracer
 
       def block_param(name)
         @block_name = name
+      end
+
+      # Ruby 3.0 omits the keyword rest when reporting `def m(...)`. Taken at
+      # face value the wrapper would declare only `*rest`, funnel any keywords
+      # into the positional array, and forward them as a trailing Hash — which
+      # raises ArgumentError at the original. Put the missing keyrest back so
+      # the generated wrapper matches what 3.1+ would have described.
+      def with_forwarded_keywords(params)
+        return params unless params.first == FORWARD_REST && params.include?(FORWARD_BLOCK)
+        return params if params.any? { |kind, _| kind == :keyrest }
+
+        block, rest = params.partition { |kind, _| kind == :block }
+        rest + [FORWARD_KEYREST] + block
       end
 
       # Anonymous parameters (`def m(*)`) and argument forwarding (`def m(...)`)
