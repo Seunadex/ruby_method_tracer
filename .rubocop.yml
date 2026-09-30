@@ -15,6 +15,13 @@ Style/StringLiterals:
 Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
 
+Naming/PredicateMethod:
+  # These are imperative actions that report whether they did anything, in the
+  # spirit of Set#add? — a question mark would misdescribe them as queries.
+  AllowedMethods:
+    - trace_method
+    - untrace_method
+
 Metrics/MethodLength:
   Max: 15
 Metrics/ClassLength:
@@ -25,3 +32,15 @@ RSpec/MultipleExpectations:
 
 RSpec/ExampleLength:
   Max: 15
+
+# The wrapper spec defines deliberately awkward method signatures — that is
+# exactly what it exists to exercise — so shape-related cops do not apply.
+Naming/MethodParameterName:
+  Exclude:
+    - 'spec/ruby_method_tracer/wrapper_spec.rb'
+Metrics/ParameterLists:
+  Exclude:
+    - 'spec/ruby_method_tracer/wrapper_spec.rb'
+Style/OptionalArguments:
+  Exclude:
+    - 'spec/ruby_method_tracer/wrapper_spec.rb'

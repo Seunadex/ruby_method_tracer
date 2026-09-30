@@ -40,8 +40,9 @@ module RubyMethodTracer
       # Abstract method to be implemented by subclasses
       #
       # @param _data [Object] Data to format
+      # @param _options [Hash] Formatter-specific options
       # @raise [NotImplementedError] Must be implemented by subclass
-      def format(_data)
+      def format(_data, _options = {})
         raise NotImplementedError, "#{self.class} must implement #format"
       end
     end

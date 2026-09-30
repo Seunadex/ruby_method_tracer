@@ -15,6 +15,12 @@ module RubyMethodTracer
   # - All options from SimpleTracer
   # - :track_hierarchy (Boolean): Enable call tree tracking; defaults to true
   #
+  # The call tree honours the same :threshold and :max_calls limits as the flat
+  # results, so leaving a tracer enabled cannot grow the tree without bound.
+  #
+  # The tree is the only store: `fetch_results` is derived from it rather than
+  # maintained alongside it, so a traced call is recorded once, not twice.
+  #
   # Usage:
   #   tracer = RubyMethodTracer::EnhancedTracer.new(MyClass, threshold: 0.005)
   #   tracer.trace_method(:expensive_call)
@@ -24,27 +30,9 @@ module RubyMethodTracer
 
     def initialize(target_class, **options)
       super
-      @call_tree = CallTree.new
+      @call_tree = CallTree.new(threshold: @options[:threshold], max_calls: @options[:max_calls])
       @track_hierarchy = @options.fetch(:track_hierarchy, true)
       @formatter = Formatters::TreeFormatter.new
-    end
-
-    def trace_method(name)
-      method_name = name.to_sym
-      visibility = method_visibility(method_name)
-      return unless visibility
-      return unless mark_wrapped?(method_name)
-
-      aliased = alias_for(method_name)
-      @target_class.send(:alias_method, aliased, method_name)
-
-      tracer = self
-      key = @tracer_key # unique per tracer instance; prevents cross-tracer interference
-
-      # Build wrapper that tracks hierarchy
-      @target_class.define_method(method_name, &build_enhanced_wrapper(aliased, method_name, key, tracer))
-
-      @target_class.send(visibility, method_name)
     end
 
     # Print the call tree visualization
@@ -64,6 +52,25 @@ module RubyMethodTracer
       @formatter.format(@call_tree, options)
     end
 
+    # Flat results, derived from the call tree.
+    #
+    # The tree already holds every completed call with its duration, status and
+    # error, so keeping a second parallel list would mean recording each call
+    # twice. The projection below is what makes the two views agree by
+    # construction.
+    #
+    # @return [Hash] Totals and the flat call list
+    def fetch_results
+      return super unless @track_hierarchy
+
+      snapshot = @call_tree.calls_snapshot
+      {
+        total_calls: snapshot.size,
+        total_time: snapshot.sum { |call| call[:execution_time] },
+        calls: snapshot.map { |call| flat_record(call) }
+      }
+    end
+
     # Get enhanced results including both flat list and hierarchy
     #
     # @return [Hash] Results with call tree and statistics
@@ -75,6 +82,28 @@ module RubyMethodTracer
       }
     end
 
+    # Wrapper entry point: open a call-tree entry.
+    #
+    # Public because the generated wrapper calls it with an explicit receiver,
+    # which cannot reach a private method.
+    #
+    # @param display_name [String] Name as it should appear in reports
+    def start_call(display_name)
+      @call_tree.start_call(display_name)
+    end
+
+    # Wrapper entry point: close the call-tree entry for this invocation.
+    #
+    # Nothing is stored in the flat list — `fetch_results` derives it from the
+    # tree — so a traced call is recorded once. `end_call` returns nil when the
+    # call fell below the threshold, which is what gates auto output.
+    def record_call(method_name, execution_time, status, error = nil)
+      return super unless @track_hierarchy
+
+      call = @call_tree.end_call(status, error, execution_time)
+      output_call(flat_record(call)) if call && @options[:auto_output]
+    end
+
     # Clear both simple tracer results and call tree
     def clear_results
       super
@@ -82,6 +111,30 @@ module RubyMethodTracer
     end
 
     private
+
+    def flat_record(call)
+      {
+        method_name: call[:method_name],
+        execution_time: call[:execution_time],
+        status: call[:status],
+        error: call[:error],
+        timestamp: call[:timestamp]
+      }
+    end
+
+    # Per-method reentrancy key so that *different* wrapped methods can nest
+    # inside each other; only self-recursion is blocked. Baked into the wrapper
+    # as a literal, so no lookup happens on the call path.
+    def wrapper_plan(method_name)
+      return super unless @track_hierarchy
+
+      Wrapper::Plan.new(
+        key: :"#{@tracer_key}_#{method_name}",
+        close: :record_call,
+        open: :start_call,
+        display_name: qualified_name(method_name)
+      )
+    end
 
     # Expose the call tree so JSON/flat exports include hierarchy + statistics.
     def report_source
@@ -93,61 +146,6 @@ module RubyMethodTracer
 
       super
     end
-
-    def build_enhanced_wrapper(aliased, method_name, key, tracer)
-      track_hierarchy = tracer.instance_variable_get(:@track_hierarchy)
-      # Use method-specific key to prevent only SELF-recursion, not all nested calls
-      method_key = :"#{key}_#{method_name}"
-
-      proc do |*args, **kwargs, &block|
-        # Ruby 3+ compatible forwarding helper (avoids passing **{} which caused
-        # SystemStackError with Ruby 3.4+ keyword argument forwarding)
-        call_aliased = lambda do
-          kwargs.empty? ? __send__(aliased, *args, &block) : __send__(aliased, *args, **kwargs, &block)
-        end
-
-        if track_hierarchy
-          tracer.__send__(:run_with_hierarchy, method_name, method_key, call_aliased)
-        else
-          tracer.__send__(:wrap_call, method_name, key) { call_aliased.call }
-        end
-      end
-    end
-
-    # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
-    def run_with_hierarchy(method_name, method_key, call_aliased)
-      # Prevent only recursive calls to the SAME method
-      return call_aliased.call if Thread.current[method_key]
-
-      Thread.current[method_key] = true
-      full_method_name = "#{@target_class}##{method_name}"
-
-      # Start tracking in call tree before entering the timed section
-      @call_tree.start_call(full_method_name)
-
-      start = monotonic_time
-      call_status = :success
-      call_error = nil
-
-      begin
-        result = call_aliased.call
-        execution_time = monotonic_time - start
-        record_call(method_name, execution_time, :success)
-        result
-      rescue StandardError => e
-        call_status = :error
-        call_error = e
-        execution_time = monotonic_time - start
-        record_call(method_name, execution_time, :error, e)
-        raise
-      ensure
-        Thread.current[method_key] = false
-        # Always end the call tree entry, even for non-StandardError exceptions,
-        # to prevent the per-thread call stack from becoming corrupted.
-        @call_tree.end_call(call_status, call_error)
-      end
-    end
-    # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
 
     def default_options
       super.merge(track_hierarchy: RubyMethodTracer.configuration.track_hierarchy)

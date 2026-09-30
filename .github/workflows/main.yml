@@ -8,13 +8,25 @@ on:
   pull_request:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ${{ matrix.os }}
     name: Ruby ${{ matrix.ruby }}
     strategy:
+      # The whole point of the matrix is to catch version-specific argument
+      # forwarding breakage, so one failing version must not cancel the rest.
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         ruby:
-          - '3.3.5'
+          - '3.1'
+          - '3.2'
+          - '3.3'
+          - '3.4'
+          - 'head'
+        include:
+          # 3.0 has no prebuilt binary for ubuntu-latest (24.04).
+          - ruby: '3.0'
+            os: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v4
@@ -23,11 +35,65 @@ jobs:
       with:
         ruby-version: ${{ matrix.ruby }}
         bundler-cache: true
-    - name: Run the default task
-      run: bundle exec rake
+    - name: Run the specs
+      run: bundle exec rspec
     - name: Upload coverage to Codecov
+      if: matrix.ruby == '3.3'
       uses: codecov/codecov-action@v4
       with:
         files: ./coverage/coverage.json
         fail_ci_if_error: false
         token: ${{ secrets.CODECOV_TOKEN }}
+
+  lint:
+    runs-on: ubuntu-latest
+    name: RuboCop
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3'
+        bundler-cache: true
+    - name: Lint
+      run: bundle exec rubocop
+    - name: Validate RBS signatures
+      run: bundle exec rbs -r logger -I sig validate
+
+  gem-smoke:
+    runs-on: ubuntu-latest
+    name: Packaged gem
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3'
+        bundler-cache: true
+    # Builds and installs the gem, then traces through it. Catches a file that
+    # exists in the repo but is missing from spec.files, which shipped broken
+    # once before (CHANGELOG 0.3.1).
+    - name: Build and install
+      run: |
+        gem build ruby_method_tracer.gemspec -o pkg.gem
+        gem install --local pkg.gem
+    - name: Require and trace from the installed gem
+      run: |
+        cd "$(mktemp -d)"
+        ruby -e '
+          require "ruby_method_tracer"
+          require "stringio"
+          class Smoke
+            include RubyMethodTracer
+            def work(num, scale: 2) = num * scale
+            def ready?(num) = num.positive?
+          end
+          tracer = Smoke.trace_methods(:work, :ready?, threshold: 0.0, logger: Logger.new(StringIO.new))
+          raise "wrong result" unless Smoke.new.work(3) == 6
+          raise "predicate broken" unless Smoke.new.ready?(1)
+          raise "arity not preserved" unless Smoke.instance_method(:work).arity == -2
+          raise "nothing recorded" unless tracer.fetch_results[:total_calls] == 2
+          enhanced = RubyMethodTracer::EnhancedTracer.new(Smoke, threshold: 0.0, logger: Logger.new(StringIO.new))
+          enhanced.trace_method(:work)
+          puts "packaged gem OK (v#{RubyMethodTracer::VERSION})"
+        '

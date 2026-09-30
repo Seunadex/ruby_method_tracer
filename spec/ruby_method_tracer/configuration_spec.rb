@@ -72,6 +72,17 @@ RSpec.describe RubyMethodTracer::Configuration do
       expect(tracer.fetch_results[:total_calls]).to eq(1)
     end
 
+    it "does not deadlock when called from inside another configure block" do
+      expect do
+        RubyMethodTracer.configure do |outer|
+          outer.threshold = 0.1
+          RubyMethodTracer.configure { |inner| inner.max_calls = 7 }
+        end
+      end.not_to raise_error
+
+      expect(RubyMethodTracer.configuration.max_calls).to eq(7)
+    end
+
     it "can be reset back to defaults" do
       RubyMethodTracer.configure { |c| c.threshold = 9.99 }
       RubyMethodTracer.reset_configuration!

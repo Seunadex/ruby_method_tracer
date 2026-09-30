@@ -6,13 +6,15 @@
 RubyMethodTracer is a lightweight Ruby mixin for targeted method tracing. It wraps instance methods, measures wall-clock runtime, flags errors, and can stream results to your logger without pulling in a full APM agent. Use it to surface slow paths in production or gather quick instrumentation while debugging.
 
 ## Highlights
-- Wrap only the methods you care about; public, protected, and private methods are supported.
+- Wrap only the methods you care about; public, protected, and private methods are supported, along with class methods.
 - Records duration, success/error state, and timestamps with thread-safe storage.
 - **Hierarchical call tree visualization** to understand nested method calls and dependencies.
-- **NEW: JSON and flat-table formatters plus file export**, alongside the existing tree output.
-- **NEW: Global configuration** via `RubyMethodTracer.configure` for process-wide defaults.
+- **Signature-preserving wrappers**: a traced method keeps its `arity` and `parameters`, so reflection-driven code still sees the real signature.
+- **Reversible**: `untrace_method` puts the original implementation and visibility back.
+- JSON and flat-table formatters plus file export, alongside the tree output.
+- Global configuration via `RubyMethodTracer.configure` for process-wide defaults.
 - Configurable threshold to ignore fast calls and optional log streaming via `Logger`.
-- Zero dependencies beyond the Ruby standard library, keeping overhead minimal.
+- Zero dependencies beyond the Ruby standard library.
 
 ## Installation
 
@@ -63,7 +65,7 @@ class Worker
   end
 end
 
-Worker.trace_methods(:perform, threshold: 0.005, auto_output: true)
+tracer = Worker.trace_methods(:perform, threshold: 0.005, auto_output: true)
 
 Worker.new.perform(42)
 ```
@@ -74,11 +76,13 @@ With `auto_output: true`, each invocation prints a colorized summary:
 TRACE: Worker#perform [OK] took 6.3ms
 ```
 
-To inspect trace results programmatically, manage the tracer yourself:
+`trace_methods` returns the tracer it created, so results are available directly.
+One tracer is memoized per class: calling `trace_methods` again adds methods to
+the same tracer rather than wrapping anything twice, and options are read on the
+first call.
 
 ```ruby
-tracer = RubyMethodTracer::SimpleTracer.new(Worker, threshold: 0.002)
-tracer.trace_method(:perform)
+tracer = Worker.trace_methods(:perform, threshold: 0.002)
 
 Worker.new.perform(42)
 
@@ -93,6 +97,40 @@ pp tracer.fetch_results
 
 # Clear results when needed to free memory
 tracer.clear_results
+
+# Put the original method back when you are done
+tracer.untrace_method(:perform)
+```
+
+You can also construct a tracer directly, which is what you want when the class
+is not yours to modify:
+
+```ruby
+tracer = RubyMethodTracer::SimpleTracer.new(Worker, threshold: 0.002)
+tracer.trace_method(:perform)
+```
+
+### Tracing class methods
+
+Class (singleton) methods need `trace_class_methods`, or a tracer built on the
+singleton class. They are reported as `Klass.method`.
+
+```ruby
+class Report
+  include RubyMethodTracer
+
+  def self.generate(range)
+    # ...
+  end
+end
+
+tracer = Report.trace_class_methods(:generate, threshold: 0.0)
+Report.generate(1..10)
+
+tracer.fetch_results[:calls].first[:method_name] # => "Report.generate"
+
+# Equivalent, without the mixin:
+RubyMethodTracer::SimpleTracer.new(Report.singleton_class).trace_method(:generate)
 ```
 
 ### Example 2
@@ -263,9 +301,9 @@ Supported formats: `:json`, `:flat`, and `:tree` (EnhancedTracer only).
 
 ### Options (SimpleTracer)
 
-- `threshold` (Float, default `0.001`): minimum duration (in seconds) to record.
+- `threshold` (Float, default `0.001`): minimum duration (in seconds) to record. On `EnhancedTracer` this also filters the call tree; a call below the threshold is kept only if it has children worth reporting.
 - `auto_output` (Boolean, default `false`): emit a log line using `Logger` for each recorded call.
-- `max_calls` (Integer, default `1000`): maximum number of calls to store in memory. When exceeded, the oldest calls are automatically removed to prevent memory leaks.
+- `max_calls` (Integer, default `1000`): maximum number of calls to store in memory. When exceeded, the oldest calls are automatically removed to prevent memory leaks. On `EnhancedTracer` this bounds the call tree and the retained root trees as well.
 - `logger` (Logger, default `Logger.new($stdout)`): custom logger instance for output. Useful for directing logs to files or custom log handlers.
 
 ### Options (EnhancedTracer)
@@ -273,6 +311,15 @@ Supported formats: `:json`, `:flat`, and `:tree` (EnhancedTracer only).
 EnhancedTracer supports all SimpleTracer options plus:
 
 - `track_hierarchy` (Boolean, default `true`): enable call tree tracking. Set to `false` to use EnhancedTracer like SimpleTracer.
+
+### API Methods (SimpleTracer)
+
+- `trace_method(name)` - Wrap a method. Returns `false` and warns if the method does not exist, or if it is already traced.
+- `untrace_method(name)` - Restore the original implementation and visibility. Returns `false` if this tracer did not trace it.
+- `untrace_all` - Restore every method this tracer wrapped; returns the method names.
+- `fetch_results` - Hash with `:total_calls`, `:total_time` and `:calls`.
+- `clear_results` - Discard recorded calls.
+- `render(format:)` / `export(path, format:)` - See Reporting & Export.
 
 ### API Methods (EnhancedTracer)
 
@@ -282,11 +329,41 @@ EnhancedTracer supports all SimpleTracer options plus:
 - `fetch_enhanced_results` - Get hash with `:flat_calls`, `:call_hierarchy`, and `:statistics`
 - `clear_results` - Clear both flat results and call tree
 
+## Overhead
+
+Tracing wraps each call, so it is not free. As a rough shape on a warm VM,
+`SimpleTracer` costs a handful of times what an empty method call costs, and
+`EnhancedTracer` costs a few times that again to maintain the call tree.
+
+The wrapper is generated per method and does the timing inline — one tracer call
+per invocation, no intermediate frames, no `Proc` allocation, and the reentrancy
+key and display name baked in as literals — so the floor is close to the cost of
+two clock reads plus the bookkeeping you asked for.
+
+In practice that is invisible next to a method that does real work: a database
+query, an HTTP call, a template render. That is the case this gem is built for.
+It is not something to leave enabled on a hot inner method in a tight loop; for
+whole-process profiling, reach for a sampling profiler instead. Raising
+`threshold` avoids storing a record, which is the larger half of the cost, but
+the wrapper still runs on every call — so prefer tracing fewer methods over
+tracing many with a high threshold.
+
+## Known limitations
+
+- A traced method keeps its `arity` and `parameters`, with two exceptions: a
+  block parameter is always declared (a method may `yield` without declaring
+  one, and block parameters do not affect arity), and anonymous parameters
+  (`def m(*)`, `def m(...)`) keep their arity but are given generated names.
+- Tracing changes the method on the class itself, so it affects every instance
+  and every subclass that inherits it.
+- A method can only be traced by one tracer at a time. A second attempt warns
+  and is refused rather than wrapping twice.
+
 ## Choosing Between SimpleTracer and EnhancedTracer
 
 **Use SimpleTracer when:**
 - You only need flat timing data
-- You want minimal overhead
+- You want the lower overhead of the two — roughly a third of `EnhancedTracer`'s
 - You're tracing independent methods
 
 **Use EnhancedTracer when:**

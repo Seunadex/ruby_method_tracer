@@ -34,6 +34,13 @@ RSpec.describe RubyMethodTracer::Exportable do
       expect { traced_simple.render(format: :bogus) }.to raise_error(ArgumentError, /unknown export format/)
     end
 
+    it "explains that :tree needs a call tree when used on SimpleTracer" do
+      tracer = RubyMethodTracer::SimpleTracer.new(target_class, threshold: 0.0)
+
+      expect { tracer.render(format: :tree) }
+        .to raise_error(ArgumentError, /needs a call tree; use EnhancedTracer/)
+    end
+
     it "supports :tree for EnhancedTracer" do
       tracer = RubyMethodTracer::EnhancedTracer.new(target_class, threshold: 0.0)
       tracer.trace_method(:work)

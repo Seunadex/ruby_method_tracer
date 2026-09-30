@@ -44,6 +44,7 @@ module RubyMethodTracer
       case format.to_s
       when "json" then Formatters::JsonFormatter.new
       when "flat" then Formatters::FlatFormatter.new
+      when "tree" then raise ArgumentError, "the :tree format needs a call tree; use EnhancedTracer"
       else raise ArgumentError, "unknown export format: #{format.inspect}"
       end
     end
@@ -52,7 +53,10 @@ module RubyMethodTracer
       safe_path = validate_export_path(path)
       # O_NOFOLLOW makes the open fail if the final component is a symlink,
       # closing the check-then-write race left by the stat-based guard below.
-      flags = File::WRONLY | File::CREAT | File::TRUNC | File::NOFOLLOW
+      # It is a POSIX open(2) flag and is absent on some platforms (Windows);
+      # there the stat-based guard alone applies.
+      flags = File::WRONLY | File::CREAT | File::TRUNC
+      flags |= File::NOFOLLOW if File.const_defined?(:NOFOLLOW)
       File.open(safe_path, flags) { |file| file.write(content) }
       safe_path
     rescue Errno::ELOOP

@@ -1,6 +1,12 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "stringio"
+
+# Named so the tracer has a real constant to render for class-method traces.
+class SingletonTarget
+  def self.generate(num) = num * 2
+end
 
 RSpec.describe RubyMethodTracer::SimpleTracer do
   let(:target_class) do
@@ -37,12 +43,23 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
     target_class.new
   end
 
+  # The generated wrapper reads the monotonic clock inline rather than through
+  # the tracer, so a deterministic duration has to be stubbed at the source.
+  # Other clock ids (the wall-clock timestamp) keep their real values.
+  def stub_duration(seconds)
+    real = Process.method(:clock_gettime)
+    values = [1.0, 1.0 + seconds]
+    allow(Process).to receive(:clock_gettime) do |clock_id, *rest|
+      clock_id == Process::CLOCK_MONOTONIC ? (values.shift || (1.0 + seconds)) : real.call(clock_id, *rest)
+    end
+  end
+
   describe "tracing behavior" do
     it "records successful calls above threshold" do
       tracer = described_class.new(target_class, threshold: 0.0)
       tracer.trace_method(:multiply)
 
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+      stub_duration(0.005)
 
       expect(instance.multiply(3)).to eq(6)
 
@@ -61,7 +78,7 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       tracer = described_class.new(target_class, threshold: 0.010)
       tracer.trace_method(:multiply)
 
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.002)
+      stub_duration(0.002)
 
       instance.multiply(3)
       results = tracer.fetch_results
@@ -71,8 +88,6 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
     it "records errors with status and error object" do
       tracer = described_class.new(target_class, threshold: 0.0)
       tracer.trace_method(:will_fail)
-
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.001)
 
       expect { instance.__send__(:will_fail) }.to raise_error(RuntimeError, "boom")
 
@@ -100,8 +115,6 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       tracer.trace_method(:multiply)
       tracer.trace_method(:multiply) # no-op on second call
 
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.003)
-
       instance.multiply(2)
       results = tracer.fetch_results
       expect(results[:total_calls]).to eq(1)
@@ -113,8 +126,6 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       tracer.trace_method(:calls_other)
 
       # Only the outer call should be recorded because the tracer guards with a thread flag
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.004)
-
       expect(instance.calls_other).to eq(2)
       names = tracer.fetch_results[:calls].map { |c| c[:method_name] }
       expect(names).to contain_exactly("#{target_class}#calls_other")
@@ -128,7 +139,7 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       tracer.trace_method(:multiply)
       allow(tracer).to receive(:colorize) { |text, _color| text }
 
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+      stub_duration(0.005)
 
       instance.multiply(5)
 
@@ -141,16 +152,106 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
     end
   end
 
+  describe "guarding against double wrapping" do
+    it "refuses to wrap a method a second tracer already wrapped" do
+      first = described_class.new(target_class, threshold: 0.0)
+      second = described_class.new(target_class, threshold: 0.0, logger: Logger.new(StringIO.new))
+      first.trace_method(:multiply)
+
+      expect(second.trace_method(:multiply)).to be false
+      expect(instance.multiply(2)).to eq(4)
+    end
+
+    it "warns when the method is already traced" do
+      out = StringIO.new
+      described_class.new(target_class, threshold: 0.0).trace_method(:multiply)
+      described_class.new(target_class, threshold: 0.0, logger: Logger.new(out)).trace_method(:multiply)
+
+      expect(out.string).to include("already traced")
+    end
+
+    it "keeps a method callable after repeated tracing attempts" do
+      3.times do
+        described_class.new(target_class, threshold: 0.0, logger: Logger.new(StringIO.new)).trace_method(:multiply)
+      end
+
+      expect(instance.multiply(3)).to eq(6)
+    end
+  end
+
+  describe "unknown methods" do
+    it "reports false and warns instead of failing silently" do
+      out = StringIO.new
+      tracer = described_class.new(target_class, threshold: 0.0, logger: Logger.new(out))
+
+      expect(tracer.trace_method(:does_not_exist)).to be false
+      expect(out.string).to include("has no method #does_not_exist")
+    end
+  end
+
+  describe "#untrace_method" do
+    it "restores the original implementation and visibility" do
+      tracer = described_class.new(target_class, threshold: 0.0)
+      tracer.trace_method(:multiply)
+      tracer.trace_method(:priv)
+
+      expect(tracer.untrace_method(:multiply)).to be true
+      expect(instance.multiply(2)).to eq(4)
+      expect(tracer.untrace_all).to eq([:priv])
+      expect(target_class.private_method_defined?(:priv)).to be true
+    end
+
+    it "stops recording and removes the alias" do
+      tracer = described_class.new(target_class, threshold: 0.0)
+      tracer.trace_method(:multiply)
+      tracer.untrace_method(:multiply)
+      instance.multiply(2)
+
+      expect(tracer.fetch_results[:total_calls]).to eq(0)
+      expect(target_class.private_method_defined?(:__ruby_method_tracer_original_multiply__)).to be false
+    end
+
+    it "returns false for a method it did not trace" do
+      expect(described_class.new(target_class).untrace_method(:multiply)).to be false
+    end
+  end
+
+  describe "alias visibility" do
+    it "keeps the saved original out of the public API" do
+      described_class.new(target_class, threshold: 0.0).trace_method(:multiply)
+
+      expect(instance.methods.grep(/ruby_method_tracer/)).to be_empty
+      expect(target_class.private_method_defined?(:__ruby_method_tracer_original_multiply__)).to be true
+    end
+  end
+
+  describe "non-local exits" do
+    it "records a throw as :incomplete rather than losing the call" do
+      klass = Class.new { def jump = throw(:done, 42) }
+      tracer = described_class.new(klass, threshold: 0.0)
+      tracer.trace_method(:jump)
+
+      expect(catch(:done) { klass.new.jump }).to eq(42)
+      expect(tracer.fetch_results[:calls].map { |c| c[:status] }).to eq([:incomplete])
+    end
+  end
+
+  describe "class methods" do
+    it "traces singleton methods and names them as they are called" do
+      tracer = described_class.new(SingletonTarget.singleton_class, threshold: 0.0)
+      tracer.trace_method(:generate)
+
+      expect(SingletonTarget.generate(3)).to eq(6)
+      expect(tracer.fetch_results[:calls].first[:method_name]).to eq("SingletonTarget.generate")
+    end
+  end
+
   describe "memory management" do
     it "enforces max_calls limit by removing oldest entries" do
       tracer = described_class.new(target_class, threshold: 0.0, max_calls: 3)
       tracer.trace_method(:multiply)
 
-      # Simulate 5 calls
-      5.times do |i|
-        allow(tracer).to receive(:monotonic_time).and_return(i.to_f, i.to_f + 0.001)
-        instance.multiply(i)
-      end
+      5.times { |i| instance.multiply(i) }
 
       results = tracer.fetch_results
       expect(results[:total_calls]).to eq(3) # Should only keep last 3 calls
@@ -161,7 +262,7 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       tracer = described_class.new(target_class, threshold: 0.0)
       tracer.trace_method(:multiply)
 
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+      stub_duration(0.005)
       instance.multiply(3)
 
       expect(tracer.fetch_results[:total_calls]).to eq(1)
@@ -181,7 +282,7 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       tracer.trace_method(:multiply)
 
       allow(tracer).to receive(:colorize) { |text, _color| text }
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+      stub_duration(0.005)
 
       instance.multiply(5)
 
@@ -195,7 +296,7 @@ RSpec.describe RubyMethodTracer::SimpleTracer do
       tracer = described_class.new(target_class, threshold: 0.0, auto_output: true)
       tracer.trace_method(:multiply)
       allow(tracer).to receive(:colorize) { |text, _color| text }
-      allow(tracer).to receive(:monotonic_time).and_return(1.0, 1.005)
+      stub_duration(0.005)
 
       instance.multiply(5)
 

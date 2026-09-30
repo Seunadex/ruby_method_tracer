@@ -21,15 +21,24 @@ Gem::Specification.new do |spec|
   spec.metadata["changelog_uri"] = "https://github.com/Seunadex/ruby_method_tracer/blob/main/CHANGELOG.md"
   spec.metadata["rubygems_mfa_required"] = "true"
 
-  # Specify which files should be added to the gem when it is released.
-  # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
-  gemspec = File.basename(__FILE__)
-  spec.files = IO.popen(%w[git ls-files -z], chdir: __dir__, err: IO::NULL) do |ls|
-    ls.readlines("\x0", chomp: true).reject do |f|
-      (f == gemspec) ||
-        f.start_with?(*%w[bin/ test/ spec/ features/ .git .github appveyor Gemfile])
-    end
-  end
+  # Globbed rather than derived from `git ls-files`.
+  #
+  # The git-based list silently omits any file that is new and not yet staged,
+  # which shipped a broken gem once already (see CHANGELOG 0.3.1 — the released
+  # 0.3.0 was missing EnhancedTracer and the formatters). Globbing cannot leave
+  # out a file that exists on disk, and the `gem-smoke` CI job builds the gem
+  # and requires it so a missing file fails the build rather than a user's
+  # install.
+  spec.files = Dir[
+    "lib/**/*.rb",
+    "sig/**/*.rbs"
+  ] + %w[
+    CHANGELOG.md
+    CODE_OF_CONDUCT.md
+    LICENSE.txt
+    README.md
+  ].select { |path| File.file?(File.join(__dir__, path)) }
+
   spec.bindir = "exe"
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]

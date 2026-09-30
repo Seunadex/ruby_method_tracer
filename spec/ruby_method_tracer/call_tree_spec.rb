@@ -214,4 +214,63 @@ RSpec.describe RubyMethodTracer::CallTree do
       expect(call_tree.calls.size).to eq(10)
     end
   end
+
+  describe "retention limits" do
+    it "caps completed calls and root trees at max_calls" do
+      tree = described_class.new(max_calls: 10)
+      50.times do |i|
+        tree.start_call("Test#method#{i}")
+        tree.end_call(:success)
+      end
+
+      expect(tree.calls.size).to eq(10)
+      expect(tree.root_calls.size).to eq(10)
+    end
+
+    it "keeps the most recent roots so old subtrees can be collected" do
+      tree = described_class.new(max_calls: 2)
+      3.times do |i|
+        tree.start_call("Test#call#{i}")
+        tree.end_call(:success)
+      end
+
+      expect(tree.root_calls.map { |c| c[:method_name] }).to eq(["Test#call1", "Test#call2"])
+    end
+
+    it "drops leaf calls below the threshold" do
+      tree = described_class.new(threshold: 60.0)
+      tree.start_call("Test#fast")
+
+      expect(tree.end_call(:success)).to be_nil
+      expect(tree.calls).to be_empty
+      expect(tree.root_calls).to be_empty
+    end
+
+    it "keeps a fast parent that has children worth reporting" do
+      tree = described_class.new(threshold: 0.0)
+      tree.start_call("Test#parent")
+      tree.start_call("Test#child")
+      tree.end_call(:success)
+      tree.end_call(:success)
+
+      expect(tree.root_calls.size).to eq(1)
+      expect(tree.root_calls.first[:children].size).to eq(1)
+    end
+
+    it "detaches a discarded child from its parent" do
+      tree = described_class.new(threshold: 60.0)
+      parent = tree.start_call("Test#parent")
+      tree.start_call("Test#fast_child")
+      tree.end_call(:success)
+
+      expect(parent[:children]).to be_empty
+    end
+
+    it "does not expose calls that are still in flight" do
+      tree = described_class.new(threshold: 0.0)
+      tree.start_call("Test#running")
+
+      expect(tree.call_hierarchy).to be_empty
+    end
+  end
 end

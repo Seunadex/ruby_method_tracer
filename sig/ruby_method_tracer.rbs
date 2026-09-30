@@ -1,4 +1,213 @@
 module RubyMethodTracer
   VERSION: String
-  # See the writing guide of rbs: https://github.com/ruby/rbs#guides
+
+  class Error < StandardError
+  end
+
+  type visibility = :public | :protected | :private
+  type status = :success | :error | :incomplete
+  type export_format = :json | :flat | :tree
+
+  type call_record = {
+    method_name: String,
+    execution_time: Float,
+    status: status,
+    error: Exception?,
+    timestamp: Time
+  }
+
+  type tree_node = {
+    method_name: String,
+    start_time: Float,
+    depth: Integer,
+    children: Array[tree_node],
+    status: status?,
+    error: Exception?,
+    execution_time: Float?,
+    timestamp: Time
+  }
+
+  type results = {
+    total_calls: Integer,
+    total_time: Float,
+    calls: Array[call_record]
+  }
+
+  type statistics = {
+    total_calls: Integer,
+    total_time: Float,
+    unique_methods: Integer,
+    slowest_methods: Array[{ method: String, avg_time: Float }],
+    most_called_methods: Array[{ method: String, count: Integer }],
+    average_time_per_method: Hash[String, Float],
+    max_depth: Integer
+  }
+
+  self.@configuration: Configuration
+
+  def self.configuration: () -> Configuration
+  def self.configure: () { (Configuration) -> void } -> Configuration
+                    | () -> Configuration
+  def self.reset_configuration!: () -> Configuration
+  def self.included: (Module) -> void
+
+  module ClassMethods
+    def trace_methods: (*Symbol | String, **untyped) -> SimpleTracer
+    def trace_class_methods: (*Symbol | String, **untyped) -> SimpleTracer
+  end
+
+  class Configuration
+    attr_accessor threshold: Float
+    attr_accessor auto_output: bool
+    attr_accessor max_calls: Integer
+    attr_accessor logger: Logger?
+    attr_accessor track_hierarchy: bool
+
+    def initialize: () -> void
+    def reset!: () -> Configuration
+    def to_h: () -> Hash[Symbol, untyped]
+  end
+
+  module Exportable
+    def render: (?format: export_format, **untyped) -> String
+    def export: (String | _ToS, ?format: export_format, **untyped) -> String
+
+    private
+
+    def build_formatter: (export_format | String) -> Formatters::BaseFormatter
+    def write_export: (String, String) -> String
+    def validate_export_path: (String | _ToS) -> String
+    def report_source: () -> untyped
+  end
+
+  module Wrapper
+    OMITTED: Object
+
+    def self.install: (Module, Symbol, Symbol, Symbol) -> Symbol
+
+    class Signature
+      def initialize: (Array[[Symbol, Symbol?]] | Array[[Symbol]]) -> void
+      def declaration: () -> String
+      def setup: () -> String
+      def forward: (Symbol) -> String
+    end
+  end
+
+  class SimpleTracer
+    include Exportable
+
+    @target_class: Module
+    @options: Hash[Symbol, untyped]
+    @calls: Array[call_record]
+    @lock: Thread::Mutex
+    @wrapped_methods: Hash[Symbol, visibility]
+    @qualified_names: Hash[Symbol, String]
+    @logger: Logger
+    @tracer_key: Symbol
+    @accessor: Symbol
+    @accessor_defined: bool?
+    @formatter: Formatters::BaseFormatter
+
+    def initialize: (Module, **untyped) -> void
+    def trace_method: (Symbol | String) -> bool
+    def untrace_method: (Symbol | String) -> bool
+    def untrace_all: () -> Array[Symbol]
+    def record_call: (Symbol, Float, status, ?Exception?) -> void
+    def fetch_results: () -> results
+    def clear_results: () -> void
+
+    private
+
+    def default_options: () -> Hash[Symbol, untyped]
+    def method_visibility: (Symbol) -> visibility?
+    def install_wrapper: (Symbol, visibility) -> void
+    def define_accessor: () -> void
+    def already_traced?: (Symbol) -> bool
+    def missing_method: (Symbol) -> bool
+    def qualified_name: (Symbol) -> String
+    def alias_for: (Symbol) -> Symbol
+    def dispatch: (Symbol) { () -> untyped } -> untyped
+    def wrap_call: (Symbol, Symbol) { () -> untyped } -> untyped
+    def monotonic_time: () -> Float
+    def output_call: (call_record) -> void
+    def status_label: (status) -> String
+    def format_time: (Float) -> String
+    def colorize: (String, Symbol) -> String
+  end
+
+  class EnhancedTracer < SimpleTracer
+    attr_reader call_tree: CallTree
+
+    @track_hierarchy: bool
+    @method_keys: Hash[Symbol, Symbol]
+
+    def initialize: (Module, **untyped) -> void
+    def print_tree: (?Hash[Symbol, untyped]) -> void
+    def format_tree: (?Hash[Symbol, untyped]) -> String
+    def fetch_enhanced_results: () -> {
+      flat_calls: results,
+      call_hierarchy: Array[tree_node],
+      statistics: statistics
+    }
+
+    private
+
+    def run_with_hierarchy: (Symbol, Symbol, ^() -> untyped) -> untyped
+  end
+
+  class CallTree
+    DEFAULT_MAX_CALLS: Integer
+
+    attr_reader calls: Array[tree_node]
+    attr_reader root_calls: Array[tree_node]
+
+    @threshold: Float
+    @max_calls: Integer
+    @lock: Thread::Mutex
+    @thread_key: Symbol
+
+    def initialize: (?threshold: Float, ?max_calls: Integer) -> void
+    def start_call: (String) -> tree_node
+    def end_call: (?status, ?Exception?) -> tree_node?
+    def current_depth: () -> Integer
+    def call_hierarchy: () -> Array[tree_node]
+    def statistics: () -> statistics
+    def clear: () -> void
+    def empty?: () -> bool
+
+    private
+
+    def discardable?: (tree_node) -> bool
+    def discard: (tree_node, tree_node?) -> nil
+    def retain: (tree_node) -> tree_node
+    def thread_call_stack: () -> Array[tree_node]
+    def monotonic_time: () -> Float
+    def default_statistics: () -> statistics
+    def calculate_method_stats: () -> Hash[String, { calls: Integer, total_time: Float, times: Array[Float] }]
+    def slowest_methods: (Hash[String, untyped]) -> Array[{ method: String, avg_time: Float }]
+    def most_called_methods: (Hash[String, untyped]) -> Array[{ method: String, count: Integer }]
+    def average_times: (Hash[String, untyped]) -> Hash[String, Float]
+  end
+
+  module Formatters
+    class BaseFormatter
+      def format_time: (Float) -> String
+      def colorize: (String, Symbol) -> String
+      def format: (untyped, ?Hash[Symbol, untyped]) -> String
+    end
+
+    class TreeFormatter < BaseFormatter
+      def format: (CallTree, ?Hash[Symbol, untyped]) -> String
+    end
+
+    class JsonFormatter < BaseFormatter
+      def format: (CallTree | results, ?Hash[Symbol, untyped]) -> String
+    end
+
+    class FlatFormatter < BaseFormatter
+      HEADERS: Array[String]
+
+      def format: (CallTree | results, ?Hash[Symbol, untyped]) -> String
+    end
+  end
 end

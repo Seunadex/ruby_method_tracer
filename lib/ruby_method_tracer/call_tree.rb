@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "call_tree_statistics"
+
 module RubyMethodTracer
   # CallTree manages the hierarchical structure of method calls,
   # tracking parent-child relationships and call depths.
@@ -10,12 +12,22 @@ module RubyMethodTracer
   # Note: @calls and @root_calls are shared across threads and protected
   # by a Mutex. The call stack is stored in thread-local storage so that
   # concurrent callers each maintain their own independent call depth.
+  #
+  # Retention is bounded on both ends: calls faster than :threshold are
+  # dropped unless they have children worth keeping, and :max_calls caps how
+  # many completed calls and root trees are retained.
   class CallTree
     attr_reader :calls, :root_calls
 
-    def initialize
+    DEFAULT_MAX_CALLS = 1000
+
+    # @param threshold [Float] Minimum duration in seconds for a leaf call to be kept
+    # @param max_calls [Integer] Maximum completed calls and root trees to retain
+    def initialize(threshold: 0.0, max_calls: DEFAULT_MAX_CALLS)
+      @threshold = threshold
+      @max_calls = max_calls
       @calls = []           # All recorded calls (flat list, shared)
-      @root_calls = []      # Top-level calls (depth 0, shared)
+      @root_calls = []      # Completed top-level calls (depth 0, shared)
       @lock = Mutex.new     # Protects @calls and @root_calls
       @thread_key = :"__ruby_method_tracer_call_stack_#{object_id}" # per-instance thread-local key
     end
@@ -41,29 +53,32 @@ module RubyMethodTracer
       # Add as child to parent if we're nested
       stack.last[:children] << call_record if stack.any?
 
-      # Track root-level calls (lock required since @root_calls is shared)
-      @lock.synchronize { @root_calls << call_record } if stack.empty?
-
+      # Root calls are collected on completion rather than here, so an
+      # in-flight call is never visible to readers of the hierarchy.
       stack.push(call_record)
       call_record
     end
 
     # End tracking a method call
     #
-    # @param status [Symbol] :success or :error
+    # @param status [Symbol] :success, :error or :incomplete
     # @param error [Exception, nil] The exception if status is :error
-    # @return [Hash, nil] The completed call record
-    def end_call(status = :success, error = nil)
+    # @param execution_time [Float, nil] Duration in seconds. Callers that
+    #   already timed the call pass it in, which saves a clock read here; when
+    #   omitted it is measured from the record's start time.
+    # @return [Hash, nil] The completed call record, or nil if it was dropped
+    def end_call(status = :success, error = nil, execution_time = nil)
       stack = thread_call_stack
       return nil if stack.empty?
 
       call_record = stack.pop
       call_record[:status] = status
       call_record[:error] = error
-      call_record[:execution_time] = monotonic_time - call_record[:start_time]
+      call_record[:execution_time] = execution_time || (monotonic_time - call_record[:start_time])
 
-      @lock.synchronize { @calls << call_record }
-      call_record
+      return discard(call_record, stack.last) if discardable?(call_record)
+
+      retain(call_record)
     end
 
     # Get the current call depth for the calling thread
@@ -71,6 +86,13 @@ module RubyMethodTracer
     # @return [Integer] The current nesting level
     def current_depth
       thread_call_stack.size
+    end
+
+    # Snapshot of every retained call, flat.
+    #
+    # @return [Array<Hash>] Completed call records, oldest first
+    def calls_snapshot
+      @lock.synchronize { @calls.dup }
     end
 
     # Get call hierarchy as nested structure
@@ -84,21 +106,7 @@ module RubyMethodTracer
     #
     # @return [Hash] Statistics including total calls, time, slowest methods, etc.
     def statistics
-      @lock.synchronize do
-        return default_statistics if @calls.empty?
-
-        method_stats = calculate_method_stats
-
-        {
-          total_calls: @calls.size,
-          total_time: @calls.sum { |c| c[:execution_time] },
-          unique_methods: method_stats.size,
-          slowest_methods: slowest_methods(method_stats),
-          most_called_methods: most_called_methods(method_stats),
-          average_time_per_method: average_times(method_stats),
-          max_depth: @calls.map { |c| c[:depth] }.max || 0
-        }
-      end
+      CallTreeStatistics.new(calls_snapshot).to_h
     end
 
     # Clear all recorded calls and reset state
@@ -122,6 +130,33 @@ module RubyMethodTracer
 
     private
 
+    # A call is dropped only when it is too fast to be interesting and has no
+    # children — dropping a parent would orphan the descendants it recorded.
+    def discardable?(call_record)
+      call_record[:execution_time] < @threshold && call_record[:children].empty?
+    end
+
+    # The record is always the last child appended by this thread's stack, so
+    # detaching it is a pop rather than a scan.
+    def discard(call_record, parent)
+      parent[:children].pop if parent && parent[:children].last.equal?(call_record)
+      nil
+    end
+
+    def retain(call_record)
+      @lock.synchronize do
+        @calls << call_record
+        @calls.shift while @calls.size > @max_calls
+        next unless call_record[:depth].zero?
+
+        # Dropping the oldest root releases its whole subtree; without this the
+        # flat cap above could not actually free anything.
+        @root_calls << call_record
+        @root_calls.shift while @root_calls.size > @max_calls
+      end
+      call_record
+    end
+
     # Returns the call stack for the current thread, creating it if needed.
     # Using a per-instance key prevents interference between multiple CallTree
     # instances running in the same thread.
@@ -131,49 +166,6 @@ module RubyMethodTracer
 
     def monotonic_time
       Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    end
-
-    def default_statistics
-      {
-        total_calls: 0,
-        total_time: 0.0,
-        unique_methods: 0,
-        slowest_methods: [],
-        most_called_methods: [],
-        average_time_per_method: {},
-        max_depth: 0
-      }
-    end
-
-    def calculate_method_stats
-      method_stats = Hash.new { |h, k| h[k] = { calls: 0, total_time: 0.0, times: [] } }
-
-      @calls.each do |call|
-        stats = method_stats[call[:method_name]]
-        stats[:calls] += 1
-        stats[:total_time] += call[:execution_time]
-        stats[:times] << call[:execution_time]
-      end
-
-      method_stats
-    end
-
-    def slowest_methods(method_stats)
-      method_stats
-        .map { |name, stats| { method: name, avg_time: stats[:total_time] / stats[:calls] } }
-        .sort_by { |m| -m[:avg_time] }
-        .take(10)
-    end
-
-    def most_called_methods(method_stats)
-      method_stats
-        .map { |name, stats| { method: name, count: stats[:calls] } }
-        .sort_by { |m| -m[:count] }
-        .take(10)
-    end
-
-    def average_times(method_stats)
-      method_stats.transform_values { |stats| stats[:total_time] / stats[:calls] }
     end
   end
 end
